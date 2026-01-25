@@ -1,0 +1,21 @@
+# Compiled files
+*.class
+*.jar
+*.war
+
+# IDE files
+.idea/
+*.iml
+
+# Maven/Build files
+target/
+node_modules/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+.env
