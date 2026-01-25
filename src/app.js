@@ -6,6 +6,7 @@ const cookieParser = require("cookie-parser");
 // route imports
 const authRoutes = require("./routes/authRoutes");
 const playerRoutes = require("./routes/playerRoutes");
+const squadRoutes = require("./routes/squadRoutes")
 
 dotenv.config();
 
@@ -21,5 +22,6 @@ app.use(cors({
 
 app.use("/api/auth", authRoutes);
 app.use("/api/player", playerRoutes);
+app.use("/api/squads", squadRoutes);
 
 module.exports = app;
