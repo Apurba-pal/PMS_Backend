@@ -11,5 +11,7 @@ const {
 router.post("/", protect, createProfile);
 router.get("/me", protect, getMyProfile);
 router.put("/me", protect, updateProfile);
+// router.patch("/me", protect, updateProfile);
+// router.post("/me", protect, updateProfile);
 
 module.exports = router;
