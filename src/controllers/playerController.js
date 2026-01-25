@@ -22,10 +22,24 @@ exports.getMyProfile = async (req, res) => {
 
 exports.updateProfile = async (req, res) => {
   const profile = await PlayerProfile.findOne({ user: req.user });
-
   if (!profile) return res.status(404).json({ message: "Profile not found" });
 
-  Object.assign(profile, req.body);
+  const allowedUpdates = [
+    "state",
+    "profilePhoto",
+    "gameUID",
+    "inGameName",
+    "profileQR",
+    "roles",
+    "playerStatus"
+  ];
+
+  allowedUpdates.forEach(field => {
+    if (req.body[field] !== undefined) {
+      profile[field] = req.body[field];
+    }
+  });
+
   await profile.save();
 
   res.json(profile);
