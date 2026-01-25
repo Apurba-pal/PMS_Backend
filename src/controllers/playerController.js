@@ -44,3 +44,27 @@ exports.updateProfile = async (req, res) => {
 
   res.json(profile);
 };
+
+exports.searchPlayers = async (req, res) => {
+  const { q, role } = req.query;
+
+  if (!q && !role)
+    return res.status(400).json({ message: "Search query required" });
+
+  const query = {};
+
+  if (role) query.roles = role;
+
+  if (q) {
+    query.$or = [
+      { inGameName: { $regex: q, $options: "i" } },
+      { gameUID: { $regex: q, $options: "i" } }
+    ];
+  }
+
+  const players = await PlayerProfile.find(query)
+    .populate("user", "name username email")
+    .select("-profileQR");
+
+  res.json(players);
+};
