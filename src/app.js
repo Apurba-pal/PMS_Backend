@@ -2,7 +2,10 @@ const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
+
+// route imports
 const authRoutes = require("./routes/authRoutes");
+const playerRoutes = require("./routes/playerRoutes");
 
 dotenv.config();
 
@@ -17,5 +20,6 @@ app.use(cors({
 }));
 
 app.use("/api/auth", authRoutes);
+app.use("/api/player", playerRoutes);
 
 module.exports = app;
