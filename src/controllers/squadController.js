@@ -256,7 +256,29 @@ exports.requestLeaveSquad = async (req, res) => {
 
   const squad = await Squad.findById(profile.currentSquad);
 
+  const me = squad.members.find(m => m.player.toString() === req.user);
   const iglMember = squad.members.find(m => m.isIGL);
+
+  // 🔥 CASE 1: Player is IGL trying to leave
+  if (me.isIGL) {
+    if (squad.members.length > 1) {
+      return res.status(400).json({
+        message: "Transfer IGL role before leaving"
+      });
+    }
+
+    // Only member → disband squad
+    squad.status = "DISBANDED";
+    squad.members = [];
+    profile.currentSquad = null;
+
+    await squad.save();
+    await profile.save();
+
+    return res.json({ message: "Squad disbanded" });
+  }
+
+  // 🔥 CASE 2: Normal player
   const iglProfile = await PlayerProfile.findOne({ user: iglMember.player });
 
   // If IGL inactive → leave directly
@@ -270,6 +292,7 @@ exports.requestLeaveSquad = async (req, res) => {
     return res.json({ message: "Left squad (IGL inactive)" });
   }
 
+  // Else send leave request
   const existing = await LeaveRequest.findOne({
     squad: squad._id,
     player: req.user,
@@ -347,4 +370,26 @@ exports.disbandSquad = async (req, res) => {
   await squad.save();
 
   res.json({ message: "Squad disbanded" });
+};
+
+exports.transferIGL = async (req, res) => {
+  const { newIglId } = req.body;
+
+  const squad = await Squad.findOne({ "members.player": req.user });
+  if (!squad) return res.status(400).json({ message: "Not in squad" });
+
+  const me = squad.members.find(m => m.player.toString() === req.user);
+  if (!me.isIGL)
+    return res.status(403).json({ message: "Only IGL can transfer leadership" });
+
+  const newLeader = squad.members.find(m => m.player.toString() === newIglId);
+  if (!newLeader)
+    return res.status(400).json({ message: "Player not in squad" });
+
+  me.isIGL = false;
+  newLeader.isIGL = true;
+
+  await squad.save();
+
+  res.json({ message: "IGL transferred successfully" });
 };
