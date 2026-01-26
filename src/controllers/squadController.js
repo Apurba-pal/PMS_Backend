@@ -267,9 +267,10 @@ exports.requestLeaveSquad = async (req, res) => {
       });
     }
 
-    // Only member → disband squad
+    // IGL Only member → disband squad
     squad.status = "DISBANDED";
     squad.members = [];
+    profile.previousSquads.push(squad.squadName);
     profile.currentSquad = null;
 
     await squad.save();
@@ -284,6 +285,7 @@ exports.requestLeaveSquad = async (req, res) => {
   // If IGL inactive → leave directly
   if (iglProfile.playerStatus !== "ACTIVE") {
     squad.members = squad.members.filter(m => m.player.toString() !== req.user);
+    profile.previousSquads.push(squad.squadName);
     profile.currentSquad = null;
 
     await squad.save();
@@ -322,7 +324,7 @@ exports.approveLeaveRequest = async (req, res) => {
   request.squad.members = request.squad.members.filter(
     m => m.player.toString() !== request.player.toString()
   );
-
+  profile.previousSquads.push(request.squad.squadName);
   profile.currentSquad = null;
   request.status = "APPROVED";
 
@@ -344,6 +346,7 @@ exports.kickPlayer = async (req, res) => {
   squad.members = squad.members.filter(m => m.player.toString() !== playerId);
 
   const profile = await PlayerProfile.findOne({ user: playerId });
+  profile.previousSquads.push(squad.squadName);
   profile.currentSquad = null;
 
   await squad.save();
@@ -361,6 +364,7 @@ exports.disbandSquad = async (req, res) => {
 
   for (const member of squad.members) {
     const profile = await PlayerProfile.findOne({ user: member.player });
+    profile.previousSquads.push(squad.squadName);
     profile.currentSquad = null;
     await profile.save();
   }

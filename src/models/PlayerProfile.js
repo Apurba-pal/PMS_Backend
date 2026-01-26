@@ -26,6 +26,11 @@ const playerProfileSchema = new mongoose.Schema({
     ref: "Squad",
     default: null
   },
+  previousSquads: [
+  {
+    type: String
+  }
+],
 
   playerStatus: {
     type: String,
