@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const protect = require("../middleware/authMiddleware");
-const { createSquad, sendInvite, acceptInvite, rejectInvite, getMyInvites , searchSquads, sendJoinRequest, getSquadJoinRequests, acceptJoinRequest, rejectJoinRequest, requestLeaveSquad, approveLeaveRequest, kickPlayer, disbandSquad, uploadSquadLogo} = require("../controllers/squadController");
+const { createSquad, sendInvite, acceptInvite, rejectInvite, getMyInvites , searchSquads, sendJoinRequest, getSquadJoinRequests, acceptJoinRequest, rejectJoinRequest, requestLeaveSquad, approveLeaveRequest, kickPlayer, disbandSquad, uploadSquadLogo, deleteSquadLogo} = require("../controllers/squadController");
 const upload = require("../middleware/upload");
 
 router.post("/", protect, createSquad);

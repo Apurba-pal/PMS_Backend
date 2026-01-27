@@ -8,7 +8,8 @@ const {
   getMyProfile,
   updateProfile,
   searchPlayers,
-  uploadProfilePhoto
+  uploadProfilePhoto,
+  deleteProfilePhoto
 } = require("../controllers/playerController");
 
 router.post("/", protect, createProfile);
