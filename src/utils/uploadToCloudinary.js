@@ -6,7 +6,7 @@ exports.uploadImage = (fileBuffer, folder) => {
     const stream = cloudinary.uploader.upload_stream(
       { folder },
       (error, result) => {
-        if (result) resolve(result.secure_url);
+        if (result) resolve(result);
         else reject(error);
       }
     );

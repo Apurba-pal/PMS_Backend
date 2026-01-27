@@ -5,6 +5,7 @@ const PlayerProfile = require("../models/PlayerProfile");
 const JoinRequest = require("../models/JoinRequest");
 const LeaveRequest = require("../models/LeaveRequest");
 const { uploadImage } = require("../utils/uploadToCloudinary");
+const { deleteImage } = require("../utils/deleteFromCloudinary");
 
 exports.createSquad = async (req, res) => {
   const { squadName, game, playstyleRole } = req.body;
@@ -410,14 +411,39 @@ exports.uploadSquadLogo = async (req, res) => {
     if (!me.isIGL)
       return res.status(403).json({ message: "Only IGL can upload logo" });
 
-    const imageUrl = await uploadImage(req.file.buffer, "squads");
+    // Delete old logo if exists
+    if (squad.logoPublicId) {
+      await deleteImage(squad.logoPublicId);
+    }
 
-    squad.logo = imageUrl;
+    const result = await uploadImage(req.file.buffer, "squads");
+
+    squad.logo = result.secure_url;
+    squad.logoPublicId = result.public_id;
+
     await squad.save();
 
-    res.json({ message: "Squad logo uploaded", imageUrl });
+    res.json({ message: "Squad logo updated", imageUrl: result.secure_url });
 
   } catch (err) {
     res.status(500).json({ message: "Upload failed", error: err.message });
   }
+};
+
+exports.deleteSquadLogo = async (req, res) => {
+  const squad = await Squad.findOne({ "members.player": req.user });
+  if (!squad) return res.status(400).json({ message: "Not in squad" });
+
+  const me = squad.members.find(m => m.player.toString() === req.user);
+  if (!me.isIGL)
+    return res.status(403).json({ message: "Only IGL can delete logo" });
+
+  await deleteImage(squad.logoPublicId);
+
+  squad.logo = null;
+  squad.logoPublicId = null;
+
+  await squad.save();
+
+  res.json({ message: "Squad logo deleted" });
 };

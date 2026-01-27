@@ -1,5 +1,6 @@
 const PlayerProfile = require("../models/PlayerProfile");
 const { uploadImage } = require("../utils/uploadToCloudinary");
+const { deleteImage } = require("../utils/deleteFromCloudinary");
 
 exports.createProfile = async (req, res) => {
   const exists = await PlayerProfile.findOne({ user: req.user });
@@ -74,17 +75,38 @@ exports.uploadProfilePhoto = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
   try {
-    const imageUrl = await uploadImage(req.file.buffer, "players");
-
     const profile = await PlayerProfile.findOne({ user: req.user });
     if (!profile) return res.status(404).json({ message: "Profile not found" });
 
-    profile.profilePhoto = imageUrl;
+    // Delete old photo
+    if (profile.profilePhotoPublicId) {
+      await deleteImage(profile.profilePhotoPublicId);
+    }
+
+    const result = await uploadImage(req.file.buffer, "players");
+
+    profile.profilePhoto = result.secure_url;
+    profile.profilePhotoPublicId = result.public_id;
+
     await profile.save();
 
-    res.json({ message: "Profile photo uploaded", imageUrl });
+    res.json({ message: "Profile photo updated", imageUrl: result.secure_url });
 
   } catch (err) {
     res.status(500).json({ message: "Upload failed", error: err.message });
   }
+};
+
+exports.deleteProfilePhoto = async (req, res) => {
+  const profile = await PlayerProfile.findOne({ user: req.user });
+  if (!profile) return res.status(404).json({ message: "Profile not found" });
+
+  await deleteImage(profile.profilePhotoPublicId);
+
+  profile.profilePhoto = null;
+  profile.profilePhotoPublicId = null;
+
+  await profile.save();
+
+  res.json({ message: "Profile photo deleted" });
 };

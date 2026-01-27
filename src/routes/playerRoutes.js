@@ -18,6 +18,7 @@ router.put("/me", protect, updateProfile);
 // router.post("/me", protect, updateProfile);
 router.get("/search", protect, searchPlayers);
 router.post("/upload-photo", protect, upload.single("image"), uploadProfilePhoto);
+router.delete("/delete-photo", protect, deleteProfilePhoto);
 
 
 module.exports = router;

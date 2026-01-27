@@ -10,6 +10,7 @@ const playerProfileSchema = new mongoose.Schema({
 
   state: String,
   profilePhoto: String,
+  profilePhotoPublicId: String,
 
   gameUID: String,
   inGameName: String,

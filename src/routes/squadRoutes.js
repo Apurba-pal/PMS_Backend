@@ -19,6 +19,7 @@ router.post("/leave-request/:requestId/approve", protect, approveLeaveRequest);
 router.post("/kick", protect, kickPlayer);
 router.post("/disband", protect, disbandSquad);
 router.post("/upload-logo", protect, upload.single("image"), uploadSquadLogo);
+router.delete("/delete-logo", protect, deleteSquadLogo);
 
 
 module.exports = router;

@@ -23,6 +23,7 @@ squadMemberSchema.index({ player: 1 });
 const squadSchema = new mongoose.Schema({
   squadName: { type: String, required: true, unique: true },
   logo: String,
+  logoPublicId: String,
   game: { type: String, required: true },
   members: [squadMemberSchema],
 
