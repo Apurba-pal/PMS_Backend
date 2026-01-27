@@ -1,4 +1,5 @@
 const PlayerProfile = require("../models/PlayerProfile");
+const { uploadImage } = require("../utils/uploadToCloudinary");
 
 exports.createProfile = async (req, res) => {
   const exists = await PlayerProfile.findOne({ user: req.user });
@@ -67,4 +68,23 @@ exports.searchPlayers = async (req, res) => {
     .select("-profileQR");
 
   res.json(players);
+};
+
+exports.uploadProfilePhoto = async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+  try {
+    const imageUrl = await uploadImage(req.file.buffer, "players");
+
+    const profile = await PlayerProfile.findOne({ user: req.user });
+    if (!profile) return res.status(404).json({ message: "Profile not found" });
+
+    profile.profilePhoto = imageUrl;
+    await profile.save();
+
+    res.json({ message: "Profile photo uploaded", imageUrl });
+
+  } catch (err) {
+    res.status(500).json({ message: "Upload failed", error: err.message });
+  }
 };

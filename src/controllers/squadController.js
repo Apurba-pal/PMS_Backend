@@ -4,6 +4,7 @@ const SquadInvite = require("../models/SquadInvite");
 const PlayerProfile = require("../models/PlayerProfile");
 const JoinRequest = require("../models/JoinRequest");
 const LeaveRequest = require("../models/LeaveRequest");
+const { uploadImage } = require("../utils/uploadToCloudinary");
 
 exports.createSquad = async (req, res) => {
   const { squadName, game, playstyleRole } = req.body;
@@ -396,4 +397,27 @@ exports.transferIGL = async (req, res) => {
   await squad.save();
 
   res.json({ message: "IGL transferred successfully" });
+};
+
+exports.uploadSquadLogo = async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+  try {
+    const squad = await Squad.findOne({ "members.player": req.user });
+    if (!squad) return res.status(400).json({ message: "Not in squad" });
+
+    const me = squad.members.find(m => m.player.toString() === req.user);
+    if (!me.isIGL)
+      return res.status(403).json({ message: "Only IGL can upload logo" });
+
+    const imageUrl = await uploadImage(req.file.buffer, "squads");
+
+    squad.logo = imageUrl;
+    await squad.save();
+
+    res.json({ message: "Squad logo uploaded", imageUrl });
+
+  } catch (err) {
+    res.status(500).json({ message: "Upload failed", error: err.message });
+  }
 };

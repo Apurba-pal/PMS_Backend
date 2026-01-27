@@ -1,12 +1,14 @@
 const express = require("express");
 const router = express.Router();
 const protect = require("../middleware/authMiddleware");
+const upload = require("../middleware/upload");
 
 const {
   createProfile,
   getMyProfile,
   updateProfile,
-  searchPlayers
+  searchPlayers,
+  uploadProfilePhoto
 } = require("../controllers/playerController");
 
 router.post("/", protect, createProfile);
@@ -15,6 +17,7 @@ router.put("/me", protect, updateProfile);
 // router.patch("/me", protect, updateProfile);
 // router.post("/me", protect, updateProfile);
 router.get("/search", protect, searchPlayers);
+router.post("/upload-photo", protect, upload.single("image"), uploadProfilePhoto);
 
 
 module.exports = router;
