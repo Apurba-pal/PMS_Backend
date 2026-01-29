@@ -6,32 +6,39 @@ const JoinRequest = require("../models/JoinRequest");
 const LeaveRequest = require("../models/LeaveRequest");
 const { uploadImage } = require("../utils/uploadToCloudinary");
 const { deleteImage } = require("../utils/deleteFromCloudinary");
+const withTransaction = require("../utils/withTransaction");
 
 exports.createSquad = async (req, res) => {
   const { squadName, game, playstyleRole } = req.body;
 
   try {
-    const userProfile = await ensurePlayerNotInSquad(req.user);
+    if (!["PRIMARY", "SECONDARY", "SNIPER", "NADER"].includes(playstyleRole))
+      throw new Error("Invalid playstyle role");
 
-    const squadExists = await Squad.findOne({ squadName });
-    if (squadExists)
-      return res.status(400).json({ message: "Squad name taken" });
+    await withTransaction(async (session) => {
+      const profile = await PlayerProfile.findOne({ user: req.user }).session(session);
+      if (!profile) throw new Error("Player profile not found");
+      if (profile.currentSquad) throw new Error("Player already in a squad");
 
-    const squad = await Squad.create({
-      squadName,
-      game,
-      createdBy: req.user,
-      members: [{
-        player: req.user,
-        isIGL: true,
-        playstyleRole
-      }]
+      const squadExists = await Squad.findOne({ squadName }).session(session);
+      if (squadExists) throw new Error("Squad name taken");
+
+      const squad = await Squad.create([{
+        squadName,
+        game,
+        createdBy: req.user,
+        members: [{
+          player: req.user,
+          isIGL: true,
+          playstyleRole
+        }]
+      }], { session });
+
+      profile.currentSquad = squad[0]._id;
+      await profile.save({ session });
     });
 
-    userProfile.currentSquad = squad._id;
-    await userProfile.save();
-
-    res.status(201).json(squad);
+    res.status(201).json({ message: "Squad created successfully" });
 
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -44,8 +51,10 @@ exports.sendInvite = async (req, res) => {
   if (!playerId)
     return res.status(400).json({ message: "playerId is required" });
 
+
   const squad = await Squad.findOne({ "members.player": req.user });
   if (!squad) return res.status(400).json({ message: "Not in squad" });
+  if (squad.status !== "ACTIVE") return res.status(400).json({ message: "Squad not active" });
 
   const me = squad.members.find(m => m.player.toString() === req.user);
   if (!me.isIGL)
@@ -53,6 +62,10 @@ exports.sendInvite = async (req, res) => {
 
   if (squad.members.length >= squad.maxSize)
     return res.status(400).json({ message: "Squad is full" });
+
+  // Check if player already in squad
+  if (squad.members.some(m => m.player.toString() === playerId))
+    return res.status(400).json({ message: "Player already in squad" });
 
   try {
     await ensurePlayerNotInSquad(playerId);
@@ -78,35 +91,53 @@ exports.sendInvite = async (req, res) => {
 };
 
 exports.acceptInvite = async (req, res) => {
-  const invite = await SquadInvite.findById(req.params.inviteId).populate("squad");
-
-  if (!invite || invite.status !== "PENDING")
-    return res.status(400).json({ message: "Invalid invite" });
-
-  if (invite.player.toString() !== req.user)
-    return res.status(403).json({ message: "Not your invite" });
-
   try {
-    const profile = await ensurePlayerNotInSquad(req.user);
+    await withTransaction(async (session) => {
+      const invite = await SquadInvite.findById(req.params.inviteId)
+        .populate("squad")
+        .session(session);
 
-    // Auto assign primary playstyle role
-    const playerRole = profile.roles.find(r =>
-      ["PRIMARY", "SECONDARY", "SNIPER", "NADER"].includes(r)
-    );
+      if (!invite || invite.status !== "PENDING")
+        throw new Error("Invalid invite");
 
-    invite.status = "ACCEPTED";
+      if (invite.player.toString() !== req.user)
+        throw new Error("Not your invite");
 
-    invite.squad.members.push({
-      player: req.user,
-      isIGL: false,
-      playstyleRole: playerRole || "PRIMARY"
+
+      const squad = invite.squad;
+      if (squad.status !== "ACTIVE") throw new Error("Squad not active");
+
+      // Squad full check
+      if (squad.members.length >= squad.maxSize)
+        throw new Error("Squad full");
+
+      // Duplicate member check
+      if (squad.members.some(m => m.player.toString() === req.user))
+        throw new Error("Already in squad");
+
+      const profile = await PlayerProfile.findOne({ user: req.user }).session(session);
+      if (!profile) throw new Error("Player profile not found");
+
+      if (profile.currentSquad)
+        throw new Error("Player already in another squad");
+
+      const playerRole = profile.roles.find(r =>
+        ["PRIMARY", "SECONDARY", "SNIPER", "NADER"].includes(r)
+      ) || "PRIMARY";
+
+      squad.members.push({
+        player: req.user,
+        isIGL: false,
+        playstyleRole: playerRole
+      });
+
+      profile.currentSquad = squad._id;
+      invite.status = "ACCEPTED";
+
+      await squad.save({ session });
+      await profile.save({ session });
+      await invite.save({ session });
     });
-
-    profile.currentSquad = invite.squad._id;
-
-    await invite.squad.save();
-    await profile.save();
-    await invite.save();
 
     res.json({ message: "Joined squad successfully" });
 
@@ -183,7 +214,10 @@ exports.sendJoinRequest = async (req, res) => {
 };
 
 exports.getSquadJoinRequests = async (req, res) => {
+
   const squad = await Squad.findOne({ "members.player": req.user });
+  if (!squad) return res.status(400).json({ message: "Not in squad" });
+  if (squad.status !== "ACTIVE") return res.status(400).json({ message: "Squad not active" });
 
   const me = squad.members.find(m => m.player.toString() === req.user);
   if (!me.isIGL)
@@ -198,32 +232,54 @@ exports.getSquadJoinRequests = async (req, res) => {
 };
 
 exports.acceptJoinRequest = async (req, res) => {
-  const request = await JoinRequest.findById(req.params.requestId).populate("squad");
-
-  const squad = request.squad;
-  const me = squad.members.find(m => m.player.toString() === req.user);
-  if (!me.isIGL)
-    return res.status(403).json({ message: "Only IGL can approve" });
-
   try {
-    const profile = await ensurePlayerNotInSquad(request.player);
+    await withTransaction(async (session) => {
+      const request = await JoinRequest.findById(req.params.requestId)
+        .populate("squad")
+        .session(session);
 
-    const playstyleRole = profile.roles.find(r =>
-      ["PRIMARY", "SECONDARY", "SNIPER", "NADER"].includes(r)
-    ) || "PRIMARY";
+      if (!request || request.status !== "PENDING")
+        throw new Error("Invalid request");
 
-    squad.members.push({
-      player: request.player,
-      isIGL: false,
-      playstyleRole
+
+      const squad = request.squad;
+      if (squad.status !== "ACTIVE") throw new Error("Squad not active");
+
+      const me = squad.members.find(m => m.player.toString() === req.user);
+      if (!me || !me.isIGL)
+        throw new Error("Only IGL can approve");
+
+      // Squad full check
+      if (squad.members.length >= squad.maxSize)
+        throw new Error("Squad full");
+
+      // Duplicate member check
+      if (squad.members.some(m => m.player.toString() === request.player.toString()))
+        throw new Error("Player already in squad");
+
+      const profile = await PlayerProfile.findOne({ user: request.player }).session(session);
+      if (!profile) throw new Error("Player profile not found");
+
+      if (profile.currentSquad)
+        throw new Error("Player already in another squad");
+
+      const playstyleRole = profile.roles.find(r =>
+        ["PRIMARY", "SECONDARY", "SNIPER", "NADER"].includes(r)
+      ) || "PRIMARY";
+
+      squad.members.push({
+        player: request.player,
+        isIGL: false,
+        playstyleRole
+      });
+
+      profile.currentSquad = squad._id;
+      request.status = "ACCEPTED";
+
+      await squad.save({ session });
+      await profile.save({ session });
+      await request.save({ session });
     });
-
-    profile.currentSquad = squad._id;
-    request.status = "ACCEPTED";
-
-    await squad.save();
-    await profile.save();
-    await request.save();
 
     res.json({ message: "Player added to squad" });
 
@@ -252,150 +308,186 @@ exports.rejectJoinRequest = async (req, res) => {
 };
 
 exports.requestLeaveSquad = async (req, res) => {
-  const profile = await PlayerProfile.findOne({ user: req.user });
-  if (!profile.currentSquad)
-    return res.status(400).json({ message: "Not in squad" });
+  try {
+    await withTransaction(async (session) => {
+      const profile = await PlayerProfile.findOne({ user: req.user }).session(session);
+      if (!profile.currentSquad) throw new Error("Not in squad");
 
-  const squad = await Squad.findById(profile.currentSquad);
+      const squad = await Squad.findById(profile.currentSquad).session(session);
 
-  const me = squad.members.find(m => m.player.toString() === req.user);
-  const iglMember = squad.members.find(m => m.isIGL);
+      const me = squad.members.find(m => m.player.toString() === req.user);
+      const iglMember = squad.members.find(m => m.isIGL);
 
-  // 🔥 CASE 1: Player is IGL trying to leave
-  if (me.isIGL) {
-    if (squad.members.length > 1) {
-      return res.status(400).json({
-        message: "Transfer IGL role before leaving"
-      });
-    }
+      // IGL leaving
+      if (me.isIGL) {
+        if (squad.members.length > 1)
+          throw new Error("Transfer IGL role before leaving");
 
-    // IGL Only member → disband squad
-    squad.status = "DISBANDED";
-    squad.members = [];
-    profile.previousSquads.push(squad.squadName);
-    profile.currentSquad = null;
+        squad.status = "DISBANDED";
+        squad.members = [];
+        profile.previousSquads.push(squad._id);
+        profile.currentSquad = null;
 
-    await squad.save();
-    await profile.save();
+        await squad.save({ session });
+        await profile.save({ session });
+        return;
+      }
 
-    return res.json({ message: "Squad disbanded" });
+      const iglProfile = await PlayerProfile.findOne({ user: iglMember.player }).session(session);
+
+      // IGL inactive → leave directly
+      if (iglProfile.playerStatus !== "ACTIVE") {
+        squad.members = squad.members.filter(m => m.player.toString() !== req.user);
+        profile.previousSquads.push(squad._id);
+        profile.currentSquad = null;
+
+        await squad.save({ session });
+        await profile.save({ session });
+        return;
+      }
+
+      const existing = await LeaveRequest.findOne({
+        squad: squad._id,
+        player: req.user,
+        status: "PENDING"
+      }).session(session);
+
+      if (existing) throw new Error("Leave request already sent");
+
+      await LeaveRequest.create([{ squad: squad._id, player: req.user }], { session });
+    });
+
+    res.json({ message: "Leave flow processed" });
+
+  } catch (err) {
+    res.status(400).json({ message: err.message });
   }
-
-  // 🔥 CASE 2: Normal player
-  const iglProfile = await PlayerProfile.findOne({ user: iglMember.player });
-
-  // If IGL inactive → leave directly
-  if (iglProfile.playerStatus !== "ACTIVE") {
-    squad.members = squad.members.filter(m => m.player.toString() !== req.user);
-    profile.previousSquads.push(squad.squadName);
-    profile.currentSquad = null;
-
-    await squad.save();
-    await profile.save();
-
-    return res.json({ message: "Left squad (IGL inactive)" });
-  }
-
-  // Else send leave request
-  const existing = await LeaveRequest.findOne({
-    squad: squad._id,
-    player: req.user,
-    status: "PENDING"
-  });
-
-  if (existing)
-    return res.status(400).json({ message: "Leave request already sent" });
-
-  const request = await LeaveRequest.create({
-    squad: squad._id,
-    player: req.user
-  });
-
-  res.status(201).json(request);
 };
 
 exports.approveLeaveRequest = async (req, res) => {
-  const request = await LeaveRequest.findById(req.params.requestId).populate("squad");
+  try {
+    await withTransaction(async (session) => {
+      const request = await LeaveRequest.findById(req.params.requestId)
+        .populate("squad")
+        .session(session);
 
-  const me = request.squad.members.find(m => m.player.toString() === req.user);
-  if (!me || !me.isIGL)
-    return res.status(403).json({ message: "Only IGL can approve" });
+      const squad = request.squad;
 
-  const profile = await PlayerProfile.findOne({ user: request.player });
+      const me = squad.members.find(m => m.player.toString() === req.user);
+      if (!me || !me.isIGL) throw new Error("Only IGL can approve");
 
-  request.squad.members = request.squad.members.filter(
-    m => m.player.toString() !== request.player.toString()
-  );
-  profile.previousSquads.push(request.squad.squadName);
-  profile.currentSquad = null;
-  request.status = "APPROVED";
+      const profile = await PlayerProfile.findOne({ user: request.player }).session(session);
 
-  await request.squad.save();
-  await profile.save();
-  await request.save();
 
-  res.json({ message: "Player removed from squad" });
+      squad.members = squad.members.filter(m => m.player.toString() !== request.player.toString());
+
+      // Auto-disband if squad is empty
+      if (squad.members.length === 0) {
+        squad.status = "DISBANDED";
+      }
+
+      profile.previousSquads.push(squad._id);
+      profile.currentSquad = null;
+      request.status = "APPROVED";
+
+      await squad.save({ session });
+      await profile.save({ session });
+      await request.save({ session });
+    });
+
+    res.json({ message: "Player removed from squad" });
+
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
 };
 
 exports.kickPlayer = async (req, res) => {
   const { playerId } = req.body;
 
-  const squad = await Squad.findOne({ "members.player": req.user });
-  const me = squad.members.find(m => m.player.toString() === req.user);
-  if (!me.isIGL)
-    return res.status(403).json({ message: "Only IGL can kick" });
+  try {
+    await withTransaction(async (session) => {
 
-  squad.members = squad.members.filter(m => m.player.toString() !== playerId);
+      const squad = await Squad.findOne({ "members.player": req.user }).session(session);
+      if (!squad) throw new Error("Not in squad");
+      if (squad.status !== "ACTIVE") throw new Error("Squad not active");
 
-  const profile = await PlayerProfile.findOne({ user: playerId });
-  profile.previousSquads.push(squad.squadName);
-  profile.currentSquad = null;
+      const me = squad.members.find(m => m.player.toString() === req.user);
+      if (!me || !me.isIGL) throw new Error("Only IGL can kick");
 
-  await squad.save();
-  await profile.save();
+      if (playerId === req.user)
+        throw new Error("IGL cannot kick themselves");
 
-  res.json({ message: "Player kicked" });
+      if (!squad.members.some(m => m.player.toString() === playerId))
+        throw new Error("Player not in squad");
+
+      squad.members = squad.members.filter(m => m.player.toString() !== playerId);
+
+      const profile = await PlayerProfile.findOne({ user: playerId }).session(session);
+      profile.previousSquads.push(squad._id);
+      profile.currentSquad = null;
+
+      await squad.save({ session });
+      await profile.save({ session });
+    });
+
+    res.json({ message: "Player kicked" });
+
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
 };
 
 exports.disbandSquad = async (req, res) => {
-  const squad = await Squad.findOne({ "members.player": req.user });
-  const me = squad.members.find(m => m.player.toString() === req.user);
+  try {
+    await withTransaction(async (session) => {
+      const squad = await Squad.findOne({ "members.player": req.user }).session(session);
+      if (!squad) throw new Error("Not in squad");
 
-  if (!me.isIGL)
-    return res.status(403).json({ message: "Only IGL can disband" });
+      const me = squad.members.find(m => m.player.toString() === req.user);
+      if (!me || !me.isIGL) throw new Error("Only IGL can disband");
 
-  for (const member of squad.members) {
-    const profile = await PlayerProfile.findOne({ user: member.player });
-    profile.previousSquads.push(squad.squadName);
-    profile.currentSquad = null;
-    await profile.save();
+      for (const member of squad.members) {
+        const profile = await PlayerProfile.findOne({ user: member.player }).session(session);
+        profile.previousSquads.push(squad._id);
+        profile.currentSquad = null;
+        await profile.save({ session });
+      }
+
+      squad.status = "DISBANDED";
+      squad.members = [];
+      await squad.save({ session });
+    });
+
+    res.json({ message: "Squad disbanded" });
+
+  } catch (err) {
+    res.status(400).json({ message: err.message });
   }
-
-  squad.status = "DISBANDED";
-  squad.members = [];
-  await squad.save();
-
-  res.json({ message: "Squad disbanded" });
 };
 
 exports.transferIGL = async (req, res) => {
   const { newIglId } = req.body;
 
-  const squad = await Squad.findOne({ "members.player": req.user });
-  if (!squad) return res.status(400).json({ message: "Not in squad" });
 
-  const me = squad.members.find(m => m.player.toString() === req.user);
-  if (!me.isIGL)
-    return res.status(403).json({ message: "Only IGL can transfer leadership" });
+  await withTransaction(async (session) => {
+    const squad = await Squad.findOne({ "members.player": req.user }).session(session);
+    if (!squad) throw new Error("Not in squad");
+    if (squad.status !== "ACTIVE") throw new Error("Squad not active");
 
-  const newLeader = squad.members.find(m => m.player.toString() === newIglId);
-  if (!newLeader)
-    return res.status(400).json({ message: "Player not in squad" });
+    const me = squad.members.find(m => m.player.toString() === req.user);
+    if (!me.isIGL)
+      throw new Error("Only IGL can transfer leadership");
 
-  me.isIGL = false;
-  newLeader.isIGL = true;
+    const newLeader = squad.members.find(m => m.player.toString() === newIglId);
+    if (!newLeader)
+      throw new Error("Player not in squad");
 
-  await squad.save();
+    me.isIGL = false;
+    newLeader.isIGL = true;
+
+    await squad.save({ session });
+  });
 
   res.json({ message: "IGL transferred successfully" });
 };
@@ -403,9 +495,11 @@ exports.transferIGL = async (req, res) => {
 exports.uploadSquadLogo = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
+
   try {
     const squad = await Squad.findOne({ "members.player": req.user });
     if (!squad) return res.status(400).json({ message: "Not in squad" });
+    if (squad.status !== "ACTIVE") return res.status(400).json({ message: "Squad not active" });
 
     const me = squad.members.find(m => m.player.toString() === req.user);
     if (!me.isIGL)
@@ -431,8 +525,10 @@ exports.uploadSquadLogo = async (req, res) => {
 };
 
 exports.deleteSquadLogo = async (req, res) => {
+
   const squad = await Squad.findOne({ "members.player": req.user });
   if (!squad) return res.status(400).json({ message: "Not in squad" });
+  if (squad.status !== "ACTIVE") return res.status(400).json({ message: "Squad not active" });
 
   const me = squad.members.find(m => m.player.toString() === req.user);
   if (!me.isIGL)
