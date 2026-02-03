@@ -9,7 +9,8 @@ const {
   updateProfile,
   searchPlayers,
   uploadProfilePhoto,
-  deleteProfilePhoto
+  deleteProfilePhoto,
+  uploadProfileQR
 } = require("../controllers/playerController");
 
 router.post("/", protect, createProfile);
@@ -20,6 +21,7 @@ router.put("/me", protect, updateProfile);
 router.get("/search", protect, searchPlayers);
 router.post("/upload-photo", protect, upload.single("image"), uploadProfilePhoto);
 router.delete("/delete-photo", protect, deleteProfilePhoto);
+router.post("/upload-qr", protect, upload.single("image"), uploadProfileQR);
 
 
 module.exports = router;

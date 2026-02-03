@@ -14,7 +14,9 @@ const playerProfileSchema = new mongoose.Schema({
 
   gameUID: String,
   inGameName: String,
+  
   profileQR: String,
+  profileQRPublicId: String,
 
   roles: [{
   type: String,

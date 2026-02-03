@@ -1,6 +1,7 @@
 const PlayerProfile = require("../models/PlayerProfile");
 const { uploadImage } = require("../utils/uploadToCloudinary");
 const { deleteImage } = require("../utils/deleteFromCloudinary");
+const resetVerificationIfNeeded = require("../utils/resetVerificationIfNeeded");
 
 exports.createProfile = async (req, res) => {
   const exists = await PlayerProfile.findOne({ user: req.user });
@@ -43,6 +44,14 @@ exports.updateProfile = async (req, res) => {
   });
 
   await profile.save();
+    // 🔥 UID CHANGE → RESET VERIFICATION
+  if (
+    req.body.gameUID &&
+    oldUID &&
+    req.body.gameUID !== oldUID
+  ) {
+    await resetVerificationIfNeeded(req.user);
+  }
 
   res.json(profile);
 };
@@ -109,4 +118,46 @@ exports.deleteProfilePhoto = async (req, res) => {
   await profile.save();
 
   res.json({ message: "Profile photo deleted" });
+};
+
+exports.uploadProfileQR = async (req, res) => {
+  if (!req.file)
+    return res.status(400).json({ message: "No QR image uploaded" });
+
+  try {
+    const profile = await PlayerProfile.findOne({ user: req.user });
+    if (!profile)
+      return res.status(404).json({ message: "Profile not found" });
+
+    /**
+     * NOTE (important, future):
+     * If player is VERIFIED and uploads a new QR,
+     * this is where verification reset / re-review logic will go.
+     */
+
+    // If QR already exists, delete old one
+    if (profile.profileQRPublicId) {
+      await deleteImage(profile.profileQRPublicId);
+    }
+
+    const result = await uploadImage(req.file.buffer, "player-qr");
+
+    profile.profileQR = result.secure_url;
+    profile.profileQRPublicId = result.public_id;
+
+    await profile.save();
+
+    await resetVerificationIfNeeded(req.user);
+
+    res.json({
+      message: "Profile QR uploaded successfully",
+      qrUrl: result.secure_url
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      message: "QR upload failed",
+      error: err.message
+    });
+  }
 };
