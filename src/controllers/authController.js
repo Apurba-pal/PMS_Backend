@@ -1,3 +1,4 @@
+require("dotenv").config();
 const User = require("../models/User");
 const bcrypt = require("bcryptjs");
 const generateToken = require("../utils/generateToken");
@@ -14,14 +15,29 @@ exports.signup = async (req, res) => {
 
   const hashedPassword = await bcrypt.hash(password, 10);
 
+  const adminExists = await User.exists({ role: "ADMIN" });
+
+const role =
+  !adminExists && email === process.env.SUPER_ADMIN_EMAIL
+    ? "ADMIN"
+    : "PLAYER";
+
   const user = await User.create({
     name,
     email,
     phone,
     username,
     password: hashedPassword,
-    dob
+    dob,
+    role,
+    accountStatus: role === "ADMIN" ? "VERIFIED" : "UNVERIFIED"
   });
+
+//   console.log("SUPER_ADMIN_EMAIL:", process.env.SUPER_ADMIN_EMAIL);
+// console.log("SIGNUP EMAIL:", email);
+// const adminExists = await User.exists({ role: "ADMIN" });
+// console.log("ADMIN EXISTS:", adminExists);
+
 
   const token = generateToken(user._id);
 
