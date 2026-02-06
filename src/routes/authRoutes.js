@@ -6,7 +6,9 @@ const protect = require("../middleware/authMiddleware");
 router.post("/signup", signup);
 router.post("/login", login);
 router.post("/logout", logout);
+router.get("/me", protect, async (req, res) => {
+  res.json({ userId: req.user, role: req.userRole });
+});
 
-// router.get("/me", protect, me);
 
 module.exports = router;
