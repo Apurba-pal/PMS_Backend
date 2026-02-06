@@ -16,7 +16,7 @@ exports.createProfile = async (req, res) => {
 };
 
 exports.getMyProfile = async (req, res) => {
-  const profile = await PlayerProfile.findOne({ user: req.user }).populate("user", "name email username phone");
+  const profile = await PlayerProfile.findOne({ user: req.user }).populate("user", "name email username phone dob");
 
   if (!profile) return res.status(404).json({ message: "Profile not found" });
 
@@ -26,6 +26,8 @@ exports.getMyProfile = async (req, res) => {
 exports.updateProfile = async (req, res) => {
   const profile = await PlayerProfile.findOne({ user: req.user });
   if (!profile) return res.status(404).json({ message: "Profile not found" });
+
+  const oldUID = profile.gameUID;
 
   const allowedUpdates = [
     "state",
