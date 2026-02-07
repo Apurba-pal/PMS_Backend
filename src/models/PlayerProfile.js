@@ -31,7 +31,8 @@ const playerProfileSchema = new mongoose.Schema({
   },
   previousSquads: [
   {
-    type: String
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Squad"
   }
 ],
 

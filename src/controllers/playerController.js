@@ -16,7 +16,9 @@ exports.createProfile = async (req, res) => {
 };
 
 exports.getMyProfile = async (req, res) => {
-  const profile = await PlayerProfile.findOne({ user: req.user }).populate("user", "name email username phone dob");
+  const profile = await PlayerProfile.findOne({ user: req.user }).populate("user", "name email username phone dob")
+  .populate("currentSquad", "squadName")
+  .populate("previousSquads", "squadName");;
 
   if (!profile) return res.status(404).json({ message: "Profile not found" });
 
