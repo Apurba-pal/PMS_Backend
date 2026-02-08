@@ -1,9 +1,12 @@
 const express = require("express");
 const router = express.Router();
 const protect = require("../middleware/authMiddleware");
-const { createSquad, sendInvite, acceptInvite, rejectInvite, getMyInvites , searchSquads, sendJoinRequest, getSquadJoinRequests, acceptJoinRequest, rejectJoinRequest, requestLeaveSquad, approveLeaveRequest, kickPlayer, disbandSquad, uploadSquadLogo, deleteSquadLogo} = require("../controllers/squadController");
+const { createSquad, sendInvite, acceptInvite, rejectInvite, getMyInvites , searchSquads, sendJoinRequest, getSquadJoinRequests, acceptJoinRequest, rejectJoinRequest, requestLeaveSquad, approveLeaveRequest, kickPlayer, disbandSquad, uploadSquadLogo, deleteSquadLogo, getMySquad} = require("../controllers/squadController");
 const upload = require("../middleware/upload");
 
+// get my squad
+router.get("/me", protect, getMySquad);
+// create squad
 router.post("/", protect, createSquad);
 // squad logo upload
 router.post("/upload-logo", protect, upload.single("image"), uploadSquadLogo);

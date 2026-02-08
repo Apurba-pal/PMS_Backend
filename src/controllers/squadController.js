@@ -8,6 +8,17 @@ const { uploadImage } = require("../utils/uploadToCloudinary");
 const { deleteImage } = require("../utils/deleteFromCloudinary");
 const withTransaction = require("../utils/withTransaction");
 
+exports.getMySquad = async (req, res) => {
+  const squad = await Squad.findOne({ "members.player": req.user })
+    .populate("members.player", "name username")
+    .select("-__v");
+
+  if (!squad)
+    return res.status(404).json({ message: "Not in any squad" });
+
+  res.json(squad);
+};
+
 exports.createSquad = async (req, res) => {
   const { squadName, game, playstyleRole } = req.body;
 
