@@ -25,7 +25,7 @@ exports.registerSquad = async (req, res) => {
     if (!squad)
       return res.status(400).json({ message: "You are not in a squad" });
 
-    const me = squad.members.find(m => m.player.toString() === req.user);
+    const me = squad.members.find(m => m.player.toString() === req.user.toString());
     if (!me.isIGL)
       return res.status(403).json({ message: "Only IGL can register squad" });
 
