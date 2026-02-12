@@ -84,6 +84,18 @@ exports.sendInvite = async (req, res) => {
     return res.status(400).json({ message: err.message });
   }
 
+  // ❗ NEW: block if player already sent join request
+  const existingJoinRequest = await JoinRequest.findOne({
+    squad: squad._id,
+    player: playerId,
+    status: "PENDING"
+  });
+
+    if (existingJoinRequest)
+    return res.status(400).json({
+      message: "Player already requested to join"
+    });
+
   const existingInvite = await SquadInvite.findOne({
     squad: squad._id,
     player: playerId,
@@ -99,6 +111,26 @@ exports.sendInvite = async (req, res) => {
   });
 
   res.status(201).json(invite);
+};
+
+exports.getSquadSentInvites = async (req, res) => {
+  const squad = await Squad.findOne({ "members.player": req.user });
+  if (!squad) return res.status(400).json({ message: "Not in squad" });
+  if (squad.status !== "ACTIVE")
+    return res.status(400).json({ message: "Squad not active" });
+
+  const me = squad.members.find(
+    m => m.player.toString() === req.user.toString()
+  );
+  if (!me || !me.isIGL)
+    return res.status(403).json({ message: "Only IGL can view sent invites" });
+
+  const invites = await SquadInvite.find({
+    squad: squad._id,
+    status: "PENDING"
+  }).populate("player", "name username");
+
+  res.json(invites);
 };
 
 exports.acceptInvite = async (req, res) => {
@@ -148,9 +180,32 @@ exports.acceptInvite = async (req, res) => {
       await squad.save({ session });
       await profile.save({ session });
       await invite.save({ session });
+    
+      if (squad.members.length >= squad.maxSize) {
+        // Expire other pending invites
+        await SquadInvite.updateMany(
+          {
+            squad: squad._id,
+            status: "PENDING",
+            _id: { $ne: invite._id }
+          },
+          { status: "EXPIRED" },
+          { session }
+        );
+
+        // Reject pending join requests
+        await JoinRequest.updateMany(
+          {
+            squad: squad._id,
+            status: "PENDING"
+          },
+          { status: "REJECTED" },
+          { session }
+        );
+      }
     });
 
-    res.json({ message: "Joined squad successfully" });
+    res.json({ message: "Joined squad successfully" });   
 
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -185,16 +240,83 @@ exports.getMyInvites = async (req, res) => {
   res.json(invites);
 };
 
-exports.searchSquads = async (req, res) => {
-  const { q } = req.query;
-  const regex = new RegExp(q, "i");
+exports.cancelInvite = async (req, res) => {
+  const { inviteId } = req.params;
 
-  const squads = await Squad.find({
-    squadName: regex,
-    status: "ACTIVE"
-  }).select("squadName game members");
+  const squad = await Squad.findOne({ "members.player": req.user });
+  if (!squad)
+    return res.status(400).json({ message: "Not in squad" });
 
-  res.json(squads);
+  if (squad.status !== "ACTIVE")
+    return res.status(400).json({ message: "Squad not active" });
+
+  const me = squad.members.find(
+    m => m.player.toString() === req.user.toString()
+  );
+  if (!me || !me.isIGL)
+    return res.status(403).json({ message: "Only IGL can cancel invites" });
+
+  const invite = await SquadInvite.findById(inviteId);
+
+  if (!invite)
+    return res.status(404).json({ message: "Invite not found" });
+
+  if (invite.squad.toString() !== squad._id.toString())
+    return res.status(403).json({ message: "Invite does not belong to your squad" });
+
+  if (invite.status !== "PENDING")
+    return res.status(400).json({ message: "Invite cannot be cancelled" });
+
+  invite.status = "CANCELLED";
+  await invite.save();
+
+  res.json({ message: "Invite cancelled successfully" });
+};
+
+exports.globalSearch = async (req, res) => {
+  try {
+    const { q = "", type = "all" } = req.query;
+
+    if (!q.trim()) {
+      return res.status(400).json({ message: "Search query is required" });
+    }
+
+    const regex = new RegExp(q, "i");
+    const results = {};
+
+    /* ======================
+       SEARCH SQUADS
+    ====================== */
+    if (type === "squad" || type === "all") {
+      results.squads = await Squad.find({
+        squadName: regex,
+        status: "ACTIVE"
+      })
+        .select("squadName game members logo")
+        .populate("members.player", "username name");
+    }
+
+    /* ======================
+       SEARCH PLAYERS
+    ====================== */
+    if (type === "player" || type === "all") {
+      results.players = await PlayerProfile.find({
+        $or: [
+          { username: regex },
+          { inGameName: regex }
+        ],
+        playerStatus: "ACTIVE"
+      })
+        .select("user username inGameName roles achievements")
+        .populate("user", "name");
+    }
+
+    res.json(results);
+
+  } catch (err) {
+    console.error("Search error:", err);
+    res.status(500).json({ message: "Search failed" });
+  }
 };
 
 exports.sendJoinRequest = async (req, res) => {
@@ -202,6 +324,13 @@ exports.sendJoinRequest = async (req, res) => {
 
   try {
     await ensurePlayerNotInSquad(req.user);
+
+    const squad = await Squad.findById(squadId);
+    if (!squad) throw new Error("Squad not found");
+    if (squad.status !== "ACTIVE") throw new Error("Squad not active");
+
+    if (squad.members.length >= squad.maxSize)
+      throw new Error("Squad is full");
 
     const existing = await JoinRequest.findOne({
       squad: squadId,
@@ -211,6 +340,16 @@ exports.sendJoinRequest = async (req, res) => {
 
     if (existing)
       return res.status(400).json({ message: "Request already sent" });
+
+    // ❗ NEW: block if squad already invited player
+    const existingInvite = await SquadInvite.findOne({
+      squad: squadId,
+      player: req.user,
+      status: "PENDING"
+    });
+
+    if (existingInvite)
+      throw new Error("You already have an invite from this squad");
 
     const request = await JoinRequest.create({
       squad: squadId,
@@ -222,6 +361,33 @@ exports.sendJoinRequest = async (req, res) => {
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
+};
+
+exports.getMyJoinRequests = async (req, res) => {
+  const requests = await JoinRequest.find({
+    player: req.user
+  })
+    .populate("squad", "squadName game status")
+    .sort({ createdAt: -1 });
+
+  res.json(requests);
+};
+
+exports.cancelJoinRequest = async (req, res) => {
+  const { requestId } = req.params;
+
+  const request = await JoinRequest.findById(requestId);
+
+  if (!request || request.status !== "PENDING")
+    return res.status(400).json({ message: "Invalid request" });
+
+  if (request.player.toString() !== req.user.toString())
+    return res.status(403).json({ message: "Not your request" });
+
+  request.status = "CANCELLED";
+  await request.save();
+
+  res.json({ message: "Join request cancelled" });
 };
 
 exports.getSquadJoinRequests = async (req, res) => {
@@ -290,6 +456,29 @@ exports.acceptJoinRequest = async (req, res) => {
       await squad.save({ session });
       await profile.save({ session });
       await request.save({ session });
+      
+            // ❗ NEW: cleanup if squad full after accept
+      if (squad.members.length >= squad.maxSize) {
+
+        await SquadInvite.updateMany(
+          {
+            squad: squad._id,
+            status: "PENDING"
+          },
+          { status: "EXPIRED" },
+          { session }
+        );
+
+        await JoinRequest.updateMany(
+          {
+            squad: squad._id,
+            status: "PENDING",
+            _id: { $ne: request._id }
+          },
+          { status: "REJECTED" },
+          { session }
+        );
+      }
     });
 
     res.json({ message: "Player added to squad" });
@@ -300,22 +489,36 @@ exports.acceptJoinRequest = async (req, res) => {
 };
 
 exports.rejectJoinRequest = async (req, res) => {
-  const { requestId } = req.params;
+  try {
+    await withTransaction(async (session) => {
+      const request = await JoinRequest.findById(req.params.requestId)
+        .populate("squad")
+        .session(session);
 
-  const request = await JoinRequest.findById(requestId).populate("squad");
+      if (!request || request.status !== "PENDING")
+        throw new Error("Invalid request");
 
-  if (!request || request.status !== "PENDING")
-    return res.status(400).json({ message: "Invalid request" });
+      const squad = request.squad;
 
-  // Check IGL permission
-  const me = request.squad.members.find(m => m.player.toString() === req.user.toString());
-  if (!me || !me.isIGL)
-    return res.status(403).json({ message: "Only IGL can reject" });
+      if (squad.status !== "ACTIVE")
+        throw new Error("Squad not active");
 
-  request.status = "REJECTED";
-  await request.save();
+      const me = squad.members.find(
+        m => m.player.toString() === req.user.toString()
+      );
 
-  res.json({ message: "Join request rejected" });
+      if (!me || !me.isIGL)
+        throw new Error("Only IGL can reject");
+
+      request.status = "REJECTED";
+      await request.save({ session });
+    });
+
+    res.json({ message: "Join request rejected" });
+
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
 };
 
 exports.requestLeaveSquad = async (req, res) => {
@@ -375,6 +578,26 @@ exports.requestLeaveSquad = async (req, res) => {
   }
 };
 
+exports.getSquadLeaveRequests = async (req, res) => {
+  const squad = await Squad.findOne({ "members.player": req.user });
+  if (!squad) return res.status(400).json({ message: "Not in squad" });
+  if (squad.status !== "ACTIVE")
+    return res.status(400).json({ message: "Squad not active" });
+
+  const me = squad.members.find(
+    m => m.player.toString() === req.user.toString()
+  );
+  if (!me || !me.isIGL)
+    return res.status(403).json({ message: "Only IGL can view leave requests" });
+
+  const requests = await LeaveRequest.find({
+    squad: squad._id,
+    status: "PENDING"
+  }).populate("player", "name username");
+
+  res.json(requests);
+};
+
 exports.approveLeaveRequest = async (req, res) => {
   try {
     await withTransaction(async (session) => {
@@ -411,6 +634,27 @@ exports.approveLeaveRequest = async (req, res) => {
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
+};
+
+exports.rejectLeaveRequest = async (req, res) => {
+  const request = await LeaveRequest.findById(req.params.requestId)
+    .populate("squad");
+
+  if (!request || request.status !== "PENDING")
+    return res.status(400).json({ message: "Invalid leave request" });
+
+  const squad = request.squad;
+
+  const me = squad.members.find(
+    m => m.player.toString() === req.user.toString()
+  );
+  if (!me || !me.isIGL)
+    return res.status(403).json({ message: "Only IGL can reject leave request" });
+
+  request.status = "REJECTED";
+  await request.save();
+
+  res.json({ message: "Leave request rejected" });
 };
 
 exports.kickPlayer = async (req, res) => {
@@ -455,22 +699,51 @@ exports.disbandSquad = async (req, res) => {
       const squad = await Squad.findOne({ "members.player": req.user }).session(session);
       if (!squad) throw new Error("Not in squad");
 
-      const me = squad.members.find(m => m.player.toString() === req.user.toString());
-      if (!me || !me.isIGL) throw new Error("Only IGL can disband");
+      if (squad.status !== "ACTIVE")
+        throw new Error("Squad not active");
 
+      const me = squad.members.find(
+        m => m.player.toString() === req.user.toString()
+      );
+
+      if (!me || !me.isIGL)
+        throw new Error("Only IGL can disband");
+
+      // 🔹 Update all member profiles
       for (const member of squad.members) {
         const profile = await PlayerProfile.findOne({ user: member.player }).session(session);
-        profile.previousSquads.push(squad._id);
-        profile.currentSquad = null;
-        await profile.save({ session });
+        if (profile) {
+          profile.previousSquads.push(squad._id);
+          profile.currentSquad = null;
+          await profile.save({ session });
+        }
       }
+
+      // 🔹 Cleanup all pending data
+      await SquadInvite.updateMany(
+        { squad: squad._id, status: "PENDING" },
+        { status: "EXPIRED" },
+        { session }
+      );
+
+      await JoinRequest.updateMany(
+        { squad: squad._id, status: "PENDING" },
+        { status: "REJECTED" },
+        { session }
+      );
+
+      await LeaveRequest.updateMany(
+        { squad: squad._id, status: "PENDING" },
+        { status: "REJECTED" },
+        { session }
+      );
 
       squad.status = "DISBANDED";
       squad.members = [];
       await squad.save({ session });
     });
 
-    res.json({ message: "Squad disbanded" });
+    res.json({ message: "Squad disbanded successfully" });
 
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -478,29 +751,48 @@ exports.disbandSquad = async (req, res) => {
 };
 
 exports.transferIGL = async (req, res) => {
-  const { newIglId } = req.body;
+  try {
+    const { newIglId } = req.body;
 
+    if (!newIglId)
+      return res.status(400).json({ message: "newIglId is required" });
 
-  await withTransaction(async (session) => {
-    const squad = await Squad.findOne({ "members.player": req.user }).session(session);
-    if (!squad) throw new Error("Not in squad");
-    if (squad.status !== "ACTIVE") throw new Error("Squad not active");
+    await withTransaction(async (session) => {
+      const squad = await Squad.findOne({ "members.player": req.user }).session(session);
+      if (!squad) throw new Error("Not in squad");
+      if (squad.status !== "ACTIVE") throw new Error("Squad not active");
 
-    const me = squad.members.find(m => m.player.toString() === req.user.toString());
-    if (!me || !me.isIGL)
-      throw new Error("Only IGL can transfer leadership");
+      const me = squad.members.find(
+        m => m.player.toString() === req.user.toString()
+      );
 
-    const newLeader = squad.members.find(m => m.player.toString() === newIglId);
-    if (!newLeader)
-      throw new Error("Player not in squad");
+      if (!me || !me.isIGL)
+        throw new Error("Only IGL can transfer leadership");
 
-    me.isIGL = false;
-    newLeader.isIGL = true;
+      if (req.user.toString() === newIglId.toString())
+        throw new Error("Cannot transfer leadership to yourself");
 
-    await squad.save({ session });
-  });
+      const newLeader = squad.members.find(
+        m => m.player.toString() === newIglId.toString()
+      );
 
-  res.json({ message: "IGL transferred successfully" });
+      if (!newLeader)
+        throw new Error("Player not in squad");
+
+      if (newLeader.isIGL)
+        throw new Error("Player is already IGL");
+
+      me.isIGL = false;
+      newLeader.isIGL = true;
+
+      await squad.save({ session });
+    });
+
+    res.json({ message: "IGL transferred successfully" });
+
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
 };
 
 exports.uploadSquadLogo = async (req, res) => {
