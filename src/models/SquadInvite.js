@@ -13,7 +13,7 @@ const squadInviteSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ["PENDING", "ACCEPTED", "REJECTED"],
+    enum: ["PENDING", "ACCEPTED", "REJECTED", "EXPIRED","CANCELLED"],
     default: "PENDING"
   }
 }, { timestamps: true });
