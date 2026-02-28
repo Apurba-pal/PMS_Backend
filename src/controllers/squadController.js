@@ -846,3 +846,29 @@ exports.deleteSquadLogo = async (req, res) => {
 
   res.json({ message: "Squad logo deleted" });
 };
+
+exports.renameSquad = async (req, res) => {
+  const { squadName } = req.body;
+  if (!squadName || !squadName.trim())
+    return res.status(400).json({ message: "Squad name is required" });
+
+  try {
+    const squad = await Squad.findOne({ "members.player": req.user });
+    if (!squad) return res.status(400).json({ message: "Not in squad" });
+    if (squad.status !== "ACTIVE") return res.status(400).json({ message: "Squad not active" });
+
+    const me = squad.members.find(m => m.player.toString() === req.user.toString());
+    if (!me || !me.isIGL)
+      return res.status(403).json({ message: "Only IGL can rename the squad" });
+
+    const taken = await Squad.findOne({ squadName: squadName.trim(), _id: { $ne: squad._id } });
+    if (taken) return res.status(400).json({ message: "Squad name already taken" });
+
+    squad.squadName = squadName.trim();
+    await squad.save();
+
+    res.json({ message: "Squad renamed successfully", squadName: squad.squadName });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};

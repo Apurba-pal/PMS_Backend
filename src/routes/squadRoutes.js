@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const protect = require("../middleware/authMiddleware");
-const { createSquad, sendInvite, acceptInvite, rejectInvite, getMyInvites , globalSearch, sendJoinRequest, getSquadJoinRequests, acceptJoinRequest, rejectJoinRequest, requestLeaveSquad, approveLeaveRequest, kickPlayer, disbandSquad, uploadSquadLogo, deleteSquadLogo, getMySquad, getSquadLeaveRequests, rejectLeaveRequest, transferIGL, getSquadSentInvites, cancelInvite, getMyJoinRequests, cancelJoinRequest} = require("../controllers/squadController");
+const { createSquad, sendInvite, acceptInvite, rejectInvite, getMyInvites , globalSearch, sendJoinRequest, getSquadJoinRequests, acceptJoinRequest, rejectJoinRequest, requestLeaveSquad, approveLeaveRequest, kickPlayer, disbandSquad, uploadSquadLogo, deleteSquadLogo, getMySquad, getSquadLeaveRequests, rejectLeaveRequest, transferIGL, getSquadSentInvites, cancelInvite, getMyJoinRequests, cancelJoinRequest, renameSquad} = require("../controllers/squadController");
 const upload = require("../middleware/upload");
 
 // get my squad
@@ -50,8 +50,10 @@ router.post("/transfer-igl", protect, transferIGL);
 router.post("/kick", protect, kickPlayer);
 // igl disband squad
 router.post("/disband", protect, disbandSquad);
-// delete quad logo
+// delete squad logo
 router.delete("/delete-logo", protect, deleteSquadLogo);
+// rename squad (IGL only)
+router.patch("/rename", protect, renameSquad);
 
 
 module.exports = router;
