@@ -92,3 +92,14 @@ exports.logout = (req, res) => {
 
   res.json({ message: "Logged out" });
 };
+
+// GET /auth/check-unique?field=email&value=foo@bar.com
+exports.checkUnique = async (req, res) => {
+  const { field, value } = req.query;
+  const allowed = ["email", "username", "phone"];
+  if (!allowed.includes(field) || !value) {
+    return res.status(400).json({ message: "Invalid request" });
+  }
+  const exists = await User.exists({ [field]: value });
+  res.json({ taken: !!exists });
+};
