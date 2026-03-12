@@ -10,7 +10,8 @@ const {
   searchPlayers,
   uploadProfilePhoto,
   deleteProfilePhoto,
-  uploadProfileQR
+  uploadProfileQR,
+  submitVerificationRequest
 } = require("../controllers/playerController");
 
 router.post("/", protect, createProfile);
@@ -22,6 +23,7 @@ router.get("/search", protect, searchPlayers);
 router.post("/upload-photo", protect, upload.single("image"), uploadProfilePhoto);
 router.delete("/delete-photo", protect, deleteProfilePhoto);
 router.post("/upload-qr", protect, upload.single("image"), uploadProfileQR);
+router.post("/verification-request", protect, upload.single("image"), submitVerificationRequest);
 
 
 module.exports = router;

@@ -8,7 +8,8 @@ router.post("/login", login);
 router.post("/logout", logout);
 router.get("/check-unique", checkUnique);
 router.get("/me", protect, async (req, res) => {
-  res.json({ userId: req.user, role: req.userRole });
+  const user = await require("../models/User").findById(req.user).select("accountStatus");
+  res.json({ userId: req.user, role: req.userRole, accountStatus: user?.accountStatus });
 });
 
 

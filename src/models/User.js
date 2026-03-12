@@ -12,7 +12,7 @@ const userSchema = new mongoose.Schema({
 
   accountStatus: {
     type: String,
-    enum: ["UNVERIFIED", "VERIFIED", "DISABLED"],
+    enum: ["UNVERIFIED", "PENDING_REVIEW", "VERIFIED", "DISABLED"],
     default: "UNVERIFIED"
   },
 

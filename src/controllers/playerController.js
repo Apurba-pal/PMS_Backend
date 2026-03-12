@@ -1,4 +1,6 @@
 const PlayerProfile = require("../models/PlayerProfile");
+const VerificationRequest = require("../models/VerificationRequest");
+const User = require("../models/User");
 const { uploadImage } = require("../utils/uploadToCloudinary");
 const { deleteImage } = require("../utils/deleteFromCloudinary");
 const resetVerificationIfNeeded = require("../utils/resetVerificationIfNeeded");
@@ -165,3 +167,57 @@ exports.uploadProfileQR = async (req, res) => {
     });
   }
 };
+
+exports.submitVerificationRequest = async (req, res) => {
+  if (!req.file)
+    return res.status(400).json({ message: "No ID proof image uploaded" });
+
+  try {
+    const user = await User.findById(req.user);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (["PENDING_REVIEW", "VERIFIED"].includes(user.accountStatus)) {
+      return res.status(400).json({
+        message:
+          user.accountStatus === "VERIFIED"
+            ? "Your account is already verified"
+            : "A verification request is already pending review"
+      });
+    }
+
+    // Check if an old rejected request exists (for re-submission)
+    const existing = await VerificationRequest.findOne({ player: req.user });
+
+    // Delete old ID proof from Cloudinary if re-submitting
+    if (existing && existing.idProofPublicId) {
+      await deleteImage(existing.idProofPublicId);
+    }
+
+    const result = await uploadImage(req.file.buffer, "id-proofs");
+
+    if (existing) {
+      existing.idProofUrl = result.secure_url;
+      existing.idProofPublicId = result.public_id;
+      existing.status = "PENDING";
+      existing.adminNote = "";
+      await existing.save();
+    } else {
+      await VerificationRequest.create({
+        player: req.user,
+        idProofUrl: result.secure_url,
+        idProofPublicId: result.public_id
+      });
+    }
+
+    user.accountStatus = "PENDING_REVIEW";
+    await user.save();
+
+    res.json({
+      message: "Verification request submitted successfully",
+      accountStatus: user.accountStatus
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: "Submission failed", error: err.message });
+  }
+};

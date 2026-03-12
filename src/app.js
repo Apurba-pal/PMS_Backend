@@ -13,6 +13,7 @@ const playerRoutes = require("./routes/playerRoutes");
 const squadRoutes = require("./routes/squadRoutes")
 const tournamentRoutes = require("./routes/tournamentRoutes");
 const standingsRoutes = require("./routes/standingRoutes");
+const adminRoutes = require("./routes/adminRoutes");
 
 
 // middleware
@@ -30,5 +31,6 @@ app.use("/api/player", playerRoutes);
 app.use("/api/squads", squadRoutes);
 app.use("/api/tournaments", tournamentRoutes);
 app.use("/api/standings", standingsRoutes);
+app.use("/api/admin", adminRoutes);
 
 module.exports = app;
