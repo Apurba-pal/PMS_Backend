@@ -33,4 +33,9 @@ app.use("/api/tournaments", tournamentRoutes);
 app.use("/api/standings", standingsRoutes);
 app.use("/api/admin", adminRoutes);
 
+// test route
+app.use("/test",(req, res)=>{
+  res.send("working!!")
+});
+
 module.exports = app;
