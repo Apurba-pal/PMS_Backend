@@ -1,6 +1,7 @@
 const User = require("../models/User");
 const PlayerProfile = require("../models/PlayerProfile");
 const VerificationRequest = require("../models/VerificationRequest");
+const withTransaction = require("../utils/withTransaction");
 
 // ─── GET /api/admin/verifications ──────────────────────────────────────────
 exports.getAllVerificationRequests = async (req, res) => {
@@ -41,21 +42,31 @@ exports.reviewVerificationRequest = async (req, res) => {
     return res.status(400).json({ message: "status must be APPROVED or REJECTED" });
   }
 
-  const request = await VerificationRequest.findById(req.params.id);
-  if (!request)
-    return res.status(404).json({ message: "Verification request not found" });
+  try {
+    const result = await withTransaction(async (session) => {
+      const request = await VerificationRequest.findById(req.params.id).session(session);
+      if (!request)
+        throw Object.assign(new Error("Verification request not found"), { status: 404 });
 
-  request.status = status;
-  request.adminNote = adminNote || "";
-  await request.save();
+      request.status = status;
+      request.adminNote = adminNote || "";
+      await request.save({ session });
 
-  // Sync User.accountStatus
-  const newAccountStatus = status === "APPROVED" ? "VERIFIED" : "UNVERIFIED";
-  await User.findByIdAndUpdate(request.player, {
-    accountStatus: newAccountStatus
-  });
+      // Sync User.accountStatus atomically
+      const newAccountStatus = status === "APPROVED" ? "VERIFIED" : "UNVERIFIED";
+      await User.findByIdAndUpdate(
+        request.player,
+        { accountStatus: newAccountStatus },
+        { session }
+      );
 
-  res.json({ message: `Request ${status.toLowerCase()}`, request });
+      return request;
+    });
+
+    res.json({ message: `Request ${status.toLowerCase()}`, request: result });
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
 };
 
 // ─── GET /api/admin/players ─────────────────────────────────────────────────

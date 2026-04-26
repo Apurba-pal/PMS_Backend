@@ -2,6 +2,7 @@ const TournamentMatch = require("../models/TournamentMatch");
 const TournamentStanding = require("../models/TournamentStanding");
 const Tournament = require("../models/Tournament");
 const OrganizerProfile = require("../models/OrganizerProfile");
+const withTransaction = require("../utils/withTransaction");
 
 /* ────────────────────────────────
    1️⃣ CREATE MATCH ROOM
@@ -42,55 +43,57 @@ exports.submitMatchResults = async (req, res) => {
     const { matchId } = req.params;
     const { results } = req.body;
 
-    const match = await TournamentMatch.findById(matchId).populate("tournament");
+    await withTransaction(async (session) => {
+      const match = await TournamentMatch.findById(matchId)
+        .populate("tournament")
+        .session(session);
 
-    if (!match)
-      return res.status(404).json({ message: "Match not found" });
+      if (!match)
+        throw Object.assign(new Error("Match not found"), { status: 404 });
 
-    const organizer = await OrganizerProfile.findOne({ owner: req.user });
-    if (!organizer || !match.tournament.organizerProfile.equals(organizer._id))
-      return res.status(403).json({ message: "Not your tournament" });
+      const organizer = await OrganizerProfile.findOne({ owner: req.user }).session(session);
+      if (!organizer || !match.tournament.organizerProfile.equals(organizer._id))
+        throw Object.assign(new Error("Not your tournament"), { status: 403 });
 
-    if (match.tournament.lifecycleStatus === "RESULTS_FINALIZED") {
-      return res.status(400).json({ message: "Results already finalized" });
-    }
+      if (match.tournament.lifecycleStatus === "RESULTS_FINALIZED")
+        throw Object.assign(new Error("Results already finalized"), { status: 400 });
 
-    if (match.status === "COMPLETED")
-      return res.status(400).json({ message: "Match already finalized" });
+      if (match.status === "COMPLETED")
+        throw Object.assign(new Error("Match already finalized"), { status: 400 });
 
-    match.results = results;
-    match.status = "COMPLETED";
-    await match.save();
+      match.results = results;
+      match.status = "COMPLETED";
+      await match.save({ session });
 
-    // 🔥 AUTO UPDATE STANDINGS
-    for (const r of results) {
-      let standing = await TournamentStanding.findOne({
-        tournament: match.tournament._id,
-        squad: r.squad
-      });
-
-      if (!standing) {
-        standing = await TournamentStanding.create({
+      // 🔥 AUTO UPDATE STANDINGS
+      for (const r of results) {
+        let standing = await TournamentStanding.findOne({
           tournament: match.tournament._id,
           squad: r.squad
-        });
+        }).session(session);
+
+        if (!standing) {
+          [standing] = await TournamentStanding.create(
+            [{ tournament: match.tournament._id, squad: r.squad }],
+            { session }
+          );
+        }
+
+        const placementPoints = getPlacementPoints(r.placement);
+
+        standing.kills += r.kills;
+        standing.placementPoints += placementPoints;
+        if (r.placement === 1) standing.wins += 1;
+        standing.totalPoints = standing.kills + standing.placementPoints + (standing.wins * 10);
+
+        await standing.save({ session });
       }
-
-      const placementPoints = getPlacementPoints(r.placement);
-
-      standing.kills += r.kills;
-      standing.placementPoints += placementPoints;
-      if (r.placement === 1) standing.wins += 1;
-
-      standing.totalPoints = standing.kills + standing.placementPoints + (standing.wins * 10);
-
-      await standing.save();
-    }
+    });
 
     res.json({ message: "Match results submitted and standings updated" });
 
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(err.status || 500).json({ message: err.message });
   }
 };
 

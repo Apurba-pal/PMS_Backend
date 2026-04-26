@@ -4,6 +4,7 @@ const User = require("../models/User");
 const { uploadImage } = require("../utils/uploadToCloudinary");
 const { deleteImage } = require("../utils/deleteFromCloudinary");
 const resetVerificationIfNeeded = require("../utils/resetVerificationIfNeeded");
+const withTransaction = require("../utils/withTransaction");
 
 exports.createProfile = async (req, res) => {
   const exists = await PlayerProfile.findOne({ user: req.user });
@@ -28,38 +29,47 @@ exports.getMyProfile = async (req, res) => {
 };
 
 exports.updateProfile = async (req, res) => {
-  const profile = await PlayerProfile.findOne({ user: req.user });
-  if (!profile) return res.status(404).json({ message: "Profile not found" });
+  try {
+    const profile = await PlayerProfile.findOne({ user: req.user });
+    if (!profile) return res.status(404).json({ message: "Profile not found" });
 
-  const oldUID = profile.gameUID;
+    const oldUID = profile.gameUID;
 
-  const allowedUpdates = [
-    "state",
-    "profilePhoto",
-    "gameUID",
-    "inGameName",
-    "profileQR",
-    "roles",
-    "playerStatus"
-  ];
+    const allowedUpdates = [
+      "state",
+      "profilePhoto",
+      "gameUID",
+      "inGameName",
+      "profileQR",
+      "roles",
+      "playerStatus"
+    ];
 
-  allowedUpdates.forEach(field => {
-    if (req.body[field] !== undefined) {
-      profile[field] = req.body[field];
+    allowedUpdates.forEach(field => {
+      if (req.body[field] !== undefined) {
+        profile[field] = req.body[field];
+      }
+    });
+
+    const uidChanged =
+      req.body.gameUID &&
+      oldUID &&
+      req.body.gameUID !== oldUID;
+
+    if (uidChanged) {
+      // Wrap profile save + verification reset in a transaction
+      await withTransaction(async (session) => {
+        await profile.save({ session });
+        await resetVerificationIfNeeded(req.user, session);
+      });
+    } else {
+      await profile.save();
     }
-  });
 
-  await profile.save();
-    // 🔥 UID CHANGE → RESET VERIFICATION
-  if (
-    req.body.gameUID &&
-    oldUID &&
-    req.body.gameUID !== oldUID
-  ) {
-    await resetVerificationIfNeeded(req.user);
+    res.json(profile);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
-
-  res.json(profile);
 };
 
 exports.searchPlayers = async (req, res) => {
@@ -146,14 +156,19 @@ exports.uploadProfileQR = async (req, res) => {
       await deleteImage(profile.profileQRPublicId);
     }
 
+    // Cloudinary upload happens outside transaction (external side-effect)
     const result = await uploadImage(req.file.buffer, "player-qr");
 
-    profile.profileQR = result.secure_url;
-    profile.profileQRPublicId = result.public_id;
+    // DB writes + verification reset are atomic
+    await withTransaction(async (session) => {
+      const freshProfile = await PlayerProfile.findOne({ user: req.user }).session(session);
 
-    await profile.save();
+      freshProfile.profileQR = result.secure_url;
+      freshProfile.profileQRPublicId = result.public_id;
+      await freshProfile.save({ session });
 
-    await resetVerificationIfNeeded(req.user);
+      await resetVerificationIfNeeded(req.user, session);
+    });
 
     res.json({
       message: "Profile QR uploaded successfully",
@@ -188,33 +203,38 @@ exports.submitVerificationRequest = async (req, res) => {
     // Check if an old rejected request exists (for re-submission)
     const existing = await VerificationRequest.findOne({ player: req.user });
 
-    // Delete old ID proof from Cloudinary if re-submitting
+    // Delete old ID proof from Cloudinary if re-submitting (outside transaction — external side-effect)
     if (existing && existing.idProofPublicId) {
       await deleteImage(existing.idProofPublicId);
     }
 
+    // Cloudinary upload happens outside transaction (external side-effect)
     const result = await uploadImage(req.file.buffer, "id-proofs");
 
-    if (existing) {
-      existing.idProofUrl = result.secure_url;
-      existing.idProofPublicId = result.public_id;
-      existing.status = "PENDING";
-      existing.adminNote = "";
-      await existing.save();
-    } else {
-      await VerificationRequest.create({
-        player: req.user,
-        idProofUrl: result.secure_url,
-        idProofPublicId: result.public_id
-      });
-    }
+    // DB writes are atomic
+    await withTransaction(async (session) => {
+      const freshUser = await User.findById(req.user).session(session);
 
-    user.accountStatus = "PENDING_REVIEW";
-    await user.save();
+      if (existing) {
+        existing.idProofUrl = result.secure_url;
+        existing.idProofPublicId = result.public_id;
+        existing.status = "PENDING";
+        existing.adminNote = "";
+        await existing.save({ session });
+      } else {
+        await VerificationRequest.create(
+          [{ player: req.user, idProofUrl: result.secure_url, idProofPublicId: result.public_id }],
+          { session }
+        );
+      }
+
+      freshUser.accountStatus = "PENDING_REVIEW";
+      await freshUser.save({ session });
+    });
 
     res.json({
       message: "Verification request submitted successfully",
-      accountStatus: user.accountStatus
+      accountStatus: "PENDING_REVIEW"
     });
 
   } catch (err) {
