@@ -78,7 +78,7 @@ exports.getAllPlayers = async (req, res) => {
   // Attach basic profile info
   const playerIds = users.map((u) => u._id);
   const profiles = await PlayerProfile.find({ user: { $in: playerIds } }).select(
-    "user gameUID inGameName profilePhoto roles"
+    "user gameUID inGameName profilePhoto roles currentSquad"
   );
 
   const profileMap = {};
@@ -107,4 +107,37 @@ exports.togglePlayerDisable = async (req, res) => {
 
   await user.save();
   res.json({ message: `Account ${user.accountStatus}`, accountStatus: user.accountStatus });
+};
+
+// ─── PATCH /api/admin/players/:id/promote ────────────────────────────────
+exports.promoteToAdmin = async (req, res) => {
+  try {
+    await withTransaction(async (session) => {
+      const user = await User.findById(req.params.id).session(session);
+      if (!user)
+        throw Object.assign(new Error("User not found"), { status: 404 });
+
+      if (user.role === "ADMIN")
+        throw Object.assign(new Error("User is already an admin"), { status: 400 });
+
+      if (user.role !== "PLAYER")
+        throw Object.assign(new Error("Only players can be promoted to admin"), { status: 400 });
+
+      // Must not be in any squad
+      const profile = await PlayerProfile.findOne({ user: user._id }).session(session);
+      if (profile && profile.currentSquad)
+        throw Object.assign(
+          new Error("Player must leave their squad before being promoted to admin"),
+          { status: 400 }
+        );
+
+      user.role = "ADMIN";
+      user.accountStatus = "VERIFIED";
+      await user.save({ session });
+    });
+
+    res.json({ message: "Player promoted to admin successfully" });
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
 };

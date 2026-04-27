@@ -8,7 +8,8 @@ const {
   getVerificationRequestById,
   reviewVerificationRequest,
   getAllPlayers,
-  togglePlayerDisable
+  togglePlayerDisable,
+  promoteToAdmin
 } = require("../controllers/adminController");
 
 // Verification requests
@@ -19,5 +20,6 @@ router.patch("/verifications/:id", protect, adminOnly, reviewVerificationRequest
 // Player management
 router.get("/players", protect, adminOnly, getAllPlayers);
 router.patch("/players/:id/disable", protect, adminOnly, togglePlayerDisable);
+router.patch("/players/:id/promote", protect, adminOnly, promoteToAdmin);
 
 module.exports = router;
